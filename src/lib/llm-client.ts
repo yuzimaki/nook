@@ -16,8 +16,76 @@ const KEY_API_KEY = "kimi-llm-api-key";
 const KEY_ENDPOINT = "kimi-llm-endpoint";
 const KEY_MODEL = "kimi-llm-model";
 
+const OPENAI_PROVIDER = "openai";
+const ANTHROPIC_PROVIDER = "anthropic";
+
 const DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o-mini";
+
+// Auto-detect API format from endpoint URL path.
+//   /anthropic or /v1/messages → Anthropic Messages API
+//   everything else             → OpenAI Chat Completions (default)
+function detectApiFormat(endpoint: string): string {
+  try {
+    const p = new URL(endpoint).pathname.toLowerCase();
+    if (p.includes("/anthropic") || p.includes("/v1/messages")) {
+      return ANTHROPIC_PROVIDER;
+    }
+  } catch {
+    // malformed URL → fall through to default
+  }
+  return OPENAI_PROVIDER;
+}
+
+// ── Shared fetch helpers ──────────────────────────────────────
+
+async function anthropicFetch(
+  endpoint: string, apiKey: string, body: Record<string, unknown>,
+) {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`LLM request failed (${res.status}): ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const text = (data as { content?: { type: string; text?: string }[] }).content?.[0]?.text ?? "";
+  return { text, raw: data };
+}
+
+async function openAIFetch(
+  endpoint: string, apiKey: string, body: Record<string, unknown>,
+) {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`LLM request failed (${res.status}): ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const text = (data as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content ?? "";
+  return { text, raw: data };
+}
+
+function parseDataUrl(url: string) {
+  const m = url.match(/^data:([^;]+);base64,(.+)$/);
+  return { mediaType: m?.[1] ?? "image/jpeg", base64: m?.[2] ?? "" };
+}
+
+// ── localStorage helpers ──────────────────────────────────────
 
 function readLS(key: string): string {
   if (typeof window === "undefined") return "";
@@ -63,7 +131,7 @@ export function isLLMConfigured(): boolean {
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | Array<Record<string, unknown>>;
 };
 
 export type ChatOptions = {
@@ -87,30 +155,29 @@ export async function llmChat(
       "LLM API key not configured. Open settings → fill API key.",
     );
   }
-  const body = {
+  const format = detectApiFormat(cfg.endpoint);
+
+  if (format === ANTHROPIC_PROVIDER) {
+    const systemMsg = messages.find((m) => m.role === "system");
+    const body: Record<string, unknown> = {
+      model: cfg.model,
+      messages: messages.filter((m) => m.role !== "system"),
+      max_tokens: opts.maxTokens ?? 1024,
+      temperature: opts.temperature ?? 0.7,
+      stream: false,
+    };
+    if (systemMsg?.content !== undefined) body.system = systemMsg.content;
+    return anthropicFetch(cfg.endpoint, cfg.apiKey, body);
+  }
+
+  // ── OpenAI-format (default) ──
+  return openAIFetch(cfg.endpoint, cfg.apiKey, {
     model: cfg.model,
     messages,
     temperature: opts.temperature ?? 0.7,
     max_tokens: opts.maxTokens ?? 1024,
     stream: false,
-  };
-  const res = await fetch(cfg.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`LLM request failed (${res.status}): ${errText.slice(0, 200)}`);
-  }
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const text = data.choices?.[0]?.message?.content ?? "";
-  return { text, raw: data };
 }
 
 // Convenience · single-shot prompt → text (system + user message format).
@@ -139,36 +206,44 @@ export async function llmGenerateWithImage(
   if (!cfg.apiKey) {
     throw new Error("LLM API key not configured. Open settings.");
   }
-  const userContent = [
-    { type: "text" as const, text: prompt },
-    { type: "image_url" as const, image_url: { url: imageDataUrl } },
-  ];
-  const messages = [];
+  const format = detectApiFormat(cfg.endpoint);
+
+  if (format === ANTHROPIC_PROVIDER) {
+    const { mediaType, base64 } = parseDataUrl(imageDataUrl);
+    const body: Record<string, unknown> = {
+      model: cfg.model,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+        ],
+      }],
+      max_tokens: opts?.maxTokens ?? 2048,
+      temperature: opts?.temperature ?? 0.3,
+      stream: false,
+    };
+    if (system) body.system = system;
+    return (await anthropicFetch(cfg.endpoint, cfg.apiKey, body)).text;
+  }
+
+  // ── OpenAI-format (default) ──
+  const messages: Array<Record<string, unknown>> = [];
   if (system) messages.push({ role: "system", content: system });
-  messages.push({ role: "user", content: userContent });
-  const body = {
+  messages.push({
+    role: "user",
+    content: [
+      { type: "text", text: prompt },
+      { type: "image_url", image_url: { url: imageDataUrl } },
+    ],
+  });
+  return (await openAIFetch(cfg.endpoint, cfg.apiKey, {
     model: cfg.model,
     messages,
     temperature: opts?.temperature ?? 0.3,
     max_tokens: opts?.maxTokens ?? 2048,
     stream: false,
-  };
-  const res = await fetch(cfg.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`vision request failed (${res.status}): ${errText.slice(0, 200)}`);
-  }
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  return data.choices?.[0]?.message?.content ?? "";
+  })).text;
 }
 
 // Friendly Chinese message for LLM errors. Maps common patterns:
