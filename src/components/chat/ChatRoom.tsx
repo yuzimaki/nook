@@ -347,16 +347,16 @@ export function ChatRoom() {
       content: text,
       ts: new Date().toISOString(),
     };
-    const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
-    const replyId = `m-${Date.now() + 1}`;
-    const replyMsg: ChatMessage = {
-      id: replyId,
-      role: "assistant",
-      content: "",
-      ts: new Date().toISOString(),
-    };
-    setSession((s) => ({ ...s, msgs: [...nextMsgs, replyMsg] }));
-    // setDraft("");
+    // const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
+    // const replyId = `m-${Date.now() + 1}`;
+    // const replyMsg: ChatMessage = {
+    //   id: replyId,
+    //   role: "assistant",
+    //   content: "",
+    //   ts: new Date().toISOString(),
+    // };
+    // setSession((s) => ({ ...s, msgs: [...nextMsgs, replyMsg] }));
+    setDraft("");
     // setBusy(true);
     // await streamReply(nextMsgs, replyId);
   }
