@@ -339,26 +339,26 @@ export function ChatRoom() {
   }
 
   async function send() {
-    const text = draft.trim();
-    if (!text || busy) return;
-    const userMsg: ChatMessage = {
-      id: `m-${Date.now()}`,
-      role: "user",
-      content: text,
-      ts: new Date().toISOString(),
-    };
-    const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
-    const replyId = `m-${Date.now() + 1}`;
-    const replyMsg: ChatMessage = {
-      id: replyId,
-      role: "assistant",
-      content: "",
-      ts: new Date().toISOString(),
-    };
-    setSession((s) => ({ ...s, msgs: [...nextMsgs, replyMsg] }));
-    setDraft("");
-    setBusy(true);
-    await streamReply(nextMsgs, replyId);
+    // const text = draft.trim();
+    // if (!text || busy) return;
+    // const userMsg: ChatMessage = {
+    //   id: `m-${Date.now()}`,
+    //   role: "user",
+    //   content: text,
+    //   ts: new Date().toISOString(),
+    // };
+    // const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
+    // const replyId = `m-${Date.now() + 1}`;
+    // const replyMsg: ChatMessage = {
+    //   id: replyId,
+    //   role: "assistant",
+    //   content: "",
+    //   ts: new Date().toISOString(),
+    // };
+    // setSession((s) => ({ ...s, msgs: [...nextMsgs, replyMsg] }));
+    // setDraft("");
+    // setBusy(true);
+    // await streamReply(nextMsgs, replyId);
   }
 
   function copyMsg(id: string) {
