@@ -347,7 +347,7 @@ export function ChatRoom() {
       content: text,
       ts: new Date().toISOString(),
     };
-    // const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
+    const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
     // const replyId = `m-${Date.now() + 1}`;
     // const replyMsg: ChatMessage = {
     //   id: replyId,
