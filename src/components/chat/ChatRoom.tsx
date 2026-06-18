@@ -5,8 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EmptyRose } from "@/components/EmptyRose";
 import { chatStore, memoryStore } from "@/lib/stores";
-import { friendlyLLMError, isLLMConfigured, llmChat, llmGenerate, type ChatMessage as LLMChatMessage } from "@/lib/llm-client";
-import { buildSystemMessage, getSystemContextStats } from "@/lib/system-prompt";
+import { isLLMConfigured, llmGenerate } from "@/lib/llm-client";
+// (memo mode unused: friendlyLLMError, llmChat, type ChatMessage as LLMChatMessage)
+import { getSystemContextStats } from "@/lib/system-prompt";
+// (memo mode unused: buildSystemMessage)
 
 // Grow a textarea to fit its content, capped at maxPx px.
 function useAutoResize(value: string, maxPx = 360) {
@@ -166,6 +168,7 @@ export function ChatRoom() {
   const [draft, setDraft] = useState("");
   const draftRef = useAutoResize(draft, 360);
   const [busy, setBusy] = useState(false);
+  // (memo mode: setBusy only used in newWindow closeout)
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // load on mount
@@ -282,84 +285,87 @@ export function ChatRoom() {
   // actions
   // ============================================
 
-  // V2 · client-side LLM call via lib/llm-client.ts (OpenAI-format chat
-  // completion). canon V1 streamed SSE w/ thinking + tool_call/tool_result
-  // 事件; V2 简化 non-streaming · 设置 LLM key 在 /settings 后 即可 chat.
-  async function streamReply(msgs: ChatMessage[], replyId: string) {
-    if (!isLLMConfigured()) {
-      setSession((s) => ({
-        ...s,
-        msgs: s.msgs.map((m) =>
-          m.id === replyId
-            ? {
-                ...m,
-                content:
-                  "(LLM API key 没填 · 进 /backstage/settings 填 endpoint + key 才能 chat)",
-              }
-            : m,
-        ),
-      }));
-      setBusy(false);
-      return;
-    }
-    try {
-      const sys = await buildSystemMessage();
-      const llmMsgs: LLMChatMessage[] = [];
-      if (sys.text) {
-        llmMsgs.push({ role: "system", content: sys.text });
-      }
-      for (const m of msgs) {
-        llmMsgs.push({ role: m.role, content: m.content });
-      }
-      const r = await llmChat(llmMsgs);
-      const text = r.text?.trim() || "(空响应)";
-      setSession((s) => ({
-        ...s,
-        msgs: s.msgs.map((m) =>
-          m.id === replyId ? { ...m, content: text } : m,
-        ),
-      }));
-    } catch (e) {
-      console.error("[chat:llm]", e);
-      const fe = friendlyLLMError(e);
-      setSession((s) => ({
-        ...s,
-        msgs: s.msgs.map((m) =>
-          m.id === replyId
-            ? {
-                ...m,
-                content: `⚠ ${fe.title}\n\n${fe.detail}\n\n→ ${fe.hint}`,
-              }
-            : m,
-        ),
-      }));
-    } finally {
-      setBusy(false);
-    }
-  }
+  // // ── AI mode · streamReply (memo mode 注释) ─────────────────────
+  // // V2 · client-side LLM call via lib/llm-client.ts (OpenAI-format chat
+  // // completion). canon V1 streamed SSE w/ thinking + tool_call/tool_result
+  // // 事件; V2 简化 non-streaming · 设置 LLM key 在 /settings 后 即可 chat.
+  // async function streamReply(msgs: ChatMessage[], replyId: string) {
+  //   if (!isLLMConfigured()) {
+  //     setSession((s) => ({
+  //       ...s,
+  //       msgs: s.msgs.map((m) =>
+  //         m.id === replyId
+  //           ? { ...m, content: "(LLM API key 没填 · 进 /backstage/settings 填 endpoint + key 才能 chat)" }
+  //           : m,
+  //       ),
+  //     }));
+  //     setBusy(false);
+  //     return;
+  //   }
+  //   try {
+  //     const sys = await buildSystemMessage();
+  //     const llmMsgs: LLMChatMessage[] = [];
+  //     if (sys.text) llmMsgs.push({ role: "system", content: sys.text });
+  //     for (const m of msgs) llmMsgs.push({ role: m.role, content: m.content });
+  //     const r = await llmChat(llmMsgs);
+  //     const text = r.text?.trim() || "(空响应)";
+  //     setSession((s) => ({
+  //       ...s,
+  //       msgs: s.msgs.map((m) => m.id === replyId ? { ...m, content: text } : m),
+  //     }));
+  //   } catch (e) {
+  //     console.error("[chat:llm]", e);
+  //     const fe = friendlyLLMError(e);
+  //     setSession((s) => ({
+  //       ...s,
+  //       msgs: s.msgs.map((m) =>
+  //         m.id === replyId
+  //           ? { ...m, content: `⚠ ${fe.title}\n\n${fe.detail}\n\n→ ${fe.hint}` }
+  //           : m,
+  //       ),
+  //     }));
+  //   } finally {
+  //     setBusy(false);
+  //   }
+  // }
 
-  async function send() {
+  // ── Memo mode send (当前) · 纯备忘录用，不发 AI，不调 API ──
+  function send() {
     const text = draft.trim();
-    if (!text || busy) return;
+    if (!text) return;
     const userMsg: ChatMessage = {
       id: `m-${Date.now()}`,
       role: "user",
       content: text,
       ts: new Date().toISOString(),
     };
-    const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
-    // const replyId = `m-${Date.now() + 1}`;
-    // const replyMsg: ChatMessage = {
-    //   id: replyId,
-    //   role: "assistant",
-    //   content: "",
-    //   ts: new Date().toISOString(),
-    // };
-    // setSession((s) => ({ ...s, msgs: [...nextMsgs, replyMsg] }));
+    setSession((s) => ({ ...s, msgs: [...s.msgs, userMsg] }));
     setDraft("");
-    // setBusy(true);
-    // await streamReply(nextMsgs, replyId);
   }
+
+  // // ── AI mode send (memo mode 注释) ──
+  // async function send() {
+  //   const text = draft.trim();
+  //   if (!text || busy) return;
+  //   const userMsg: ChatMessage = {
+  //     id: `m-${Date.now()}`,
+  //     role: "user",
+  //     content: text,
+  //     ts: new Date().toISOString(),
+  //   };
+  //   const nextMsgs: ChatMessage[] = [...session.msgs, userMsg];
+  //   const replyId = `m-${Date.now() + 1}`;
+  //   const replyMsg: ChatMessage = {
+  //     id: replyId,
+  //     role: "assistant",
+  //     content: "",
+  //     ts: new Date().toISOString(),
+  //   };
+  //   setSession((s) => ({ ...s, msgs: [...nextMsgs, replyMsg] }));
+  //   setDraft("");
+  //   setBusy(true);
+  //   await streamReply(nextMsgs, replyId);
+  // }
 
   function copyMsg(id: string) {
     const m = session.msgs.find((x) => x.id === id);
@@ -367,28 +373,20 @@ export function ChatRoom() {
     void navigator.clipboard.writeText(m.content).catch(() => {});
   }
 
-  async function retryLast() {
-    if (busy) return;
-    // 删掉最后一条 assistant, 用其前的 history (含最后一条 user) 重 fire.
-    const lastAssistantIdx = [...session.msgs]
-      .reverse()
-      .findIndex((m) => m.role === "assistant");
-    if (lastAssistantIdx === -1) return;
-    const removeAt = session.msgs.length - 1 - lastAssistantIdx;
-    const historyMsgs = session.msgs.slice(0, removeAt);
-    if (!historyMsgs.length) return;
-
-    const replyId = `m-${Date.now()}`;
-    const replyMsg: ChatMessage = {
-      id: replyId,
-      role: "assistant",
-      content: "",
-      ts: new Date().toISOString(),
-    };
-    setSession((s) => ({ ...s, msgs: [...historyMsgs, replyMsg] }));
-    setBusy(true);
-    await streamReply(historyMsgs, replyId);
-  }
+  // // ── AI mode retryLast (memo mode 注释) ──
+  // async function retryLast() {
+  //   if (busy) return;
+  //   const lastAssistantIdx = [...session.msgs].reverse().findIndex((m) => m.role === "assistant");
+  //   if (lastAssistantIdx === -1) return;
+  //   const removeAt = session.msgs.length - 1 - lastAssistantIdx;
+  //   const historyMsgs = session.msgs.slice(0, removeAt);
+  //   if (!historyMsgs.length) return;
+  //   const replyId = `m-${Date.now()}`;
+  //   const replyMsg: ChatMessage = { id: replyId, role: "assistant", content: "", ts: new Date().toISOString() };
+  //   setSession((s) => ({ ...s, msgs: [...historyMsgs, replyMsg] }));
+  //   setBusy(true);
+  //   await streamReply(historyMsgs, replyId);
+  // }
 
   async function newWindow() {
     if (
@@ -835,7 +833,7 @@ export function ChatRoom() {
           touchAction: "pan-y",
         }}
       >
-        {session.msgs.length === 0 && !busy ? (
+        {session.msgs.length === 0 /* AI mode: && !busy */ ? (
           <EmptyRose message="今天还没说话 · 写一句" palette="gothic" />
         ) : (
           session.msgs.map((m, i) => {
@@ -843,12 +841,8 @@ export function ChatRoom() {
             const showTs =
               !prev ||
               new Date(m.ts).getTime() - new Date(prev.ts).getTime() > 5 * 60 * 1000;
-            // retry 只对最后一条 assistant 显示 (并且不是 streaming 中)
-            const isLastAssistant =
-              m.role === "assistant" &&
-              i === session.msgs.length - 1 &&
-              m.content.length > 0 &&
-              !busy;
+            // // AI mode: retry 只对最后一条 assistant 显示
+            // const isLastAssistant = m.role === "assistant" && i === session.msgs.length - 1 && m.content.length > 0 && !busy;
             return (
               <MessageItem
                 key={m.id}
@@ -856,23 +850,16 @@ export function ChatRoom() {
                 palette={p}
                 showTs={showTs}
                 onCopy={() => copyMsg(m.id)}
-                onRetry={isLastAssistant ? retryLast : undefined}
+                // onRetry={isLastAssistant ? retryLast : undefined}
               />
             );
           })
         )}
+        {/* AI mode:
         {busy && (
-          <div
-            style={{
-              fontSize: 12,
-              color: p.inkMute,
-              fontStyle: "italic",
-              marginTop: 6,
-            }}
-          >
-            ...
-          </div>
+          <div style={{ fontSize: 12, color: p.inkMute, fontStyle: "italic", marginTop: 6 }}>...</div>
         )}
+        */}
       </div>
 
       {/* input — PWA 紧凑版, 让 message 区往下延 */}
@@ -918,7 +905,7 @@ export function ChatRoom() {
         <button
           type="button"
           onClick={send}
-          disabled={busy || !draft.trim()}
+          disabled={!draft.trim()}
           aria-label="send"
           style={{
             width: 32,
