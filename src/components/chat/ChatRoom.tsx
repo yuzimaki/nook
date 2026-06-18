@@ -356,8 +356,8 @@ export function ChatRoom() {
       ts: new Date().toISOString(),
     };
     setSession((s) => ({ ...s, msgs: [...nextMsgs, replyMsg] }));
-    setDraft("");
-    setBusy(true);
+    // setDraft("");
+    // setBusy(true);
     // await streamReply(nextMsgs, replyId);
   }
 
